@@ -9,7 +9,7 @@
 // file.
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, posix, resolve } from "node:path";
 import { ACTOR_RE } from "./lib";
 import { createProvider, gitRoot, type VcsProvider } from "./vcs";
 import { fieldIn, isObj, normalizeVizConfig, VizConfigError, type VizConfig } from "./viz-app/config";
@@ -401,7 +401,8 @@ export function loadContext(): OkfContext {
   try {
     // The generated viz output must never count as workspace content for the
     // filesystem provider.
-    vcs = createProvider(cliVcs.provider, root, [...cliVcs.ignore, join(viz.bundle.dir, viz.bundle.out)]);
+    // A glob, so /-separated: Bun.Glob reads a backslash as an escape.
+    vcs = createProvider(cliVcs.provider, root, [...cliVcs.ignore, posix.join(viz.bundle.dir, viz.bundle.out)]);
   } catch (e) {
     console.error(`okf: ${e instanceof Error ? e.message : e}`);
     process.exit(1);
