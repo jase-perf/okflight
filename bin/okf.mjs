@@ -18,7 +18,8 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { basename } from "node:path";
+import { createRequire } from "node:module";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const entry = fileURLToPath(new URL("../okf.ts", import.meta.url));
@@ -41,13 +42,26 @@ if (typeof Bun !== "undefined") {
   await import(entry);
 } else {
   const isWin = process.platform === "win32";
-  const local = ["../node_modules/.bin/bun", "../../.bin/bun"] // nested (global installs) and flat layouts
-    .map((rel) => fileURLToPath(new URL(rel + (isWin ? ".cmd" : ""), import.meta.url)))
-    .filter((p) => existsSync(p));
+  // The optionalDependency's binary, found by module resolution so every
+  // install layout (flat, nested, scoped, global) works. Its postinstall
+  // renames the platform binary to bin/bun.exe on every OS, and spawning it
+  // directly needs no shell.
+  let pkgBun = [];
+  try {
+    pkgBun = [join(dirname(createRequire(import.meta.url).resolve("bun/package.json")), "bin", "bun.exe")];
+  } catch {} // not installed (--no-optional, unsupported platform)
+  // .bin shims as a fallback: nested (global installs) and flat layouts, the
+  // flat one three levels up because this package is scoped
+  // (node_modules/@kriswill/okflight/bin/).
+  const shims = ["../node_modules/.bin/bun", "../../../.bin/bun"]
+    .map((rel) => fileURLToPath(new URL(rel + (isWin ? ".cmd" : ""), import.meta.url)));
+  const local = [...pkgBun, ...shims].filter((p) => existsSync(p));
   for (const bun of ["bun", ...local]) {
     // .cmd shims need a shell; node refuses to spawn them directly.
     const r = spawnSync(bun, [entry, ...process.argv.slice(2)], { stdio: "inherit", shell: bun.endsWith(".cmd") });
-    if (r.error && r.error.code === "ENOENT") continue; // not on PATH — try the next candidate
+    // ENOENT: not on PATH. EACCES/ENOEXEC: bun.exe is still the text
+    // placeholder because install scripts were skipped. Try the next candidate.
+    if (r.error && ["ENOENT", "EACCES", "ENOEXEC"].includes(r.error.code)) continue;
     if (r.error) throw r.error;
     process.exit(r.status ?? 1);
   }

@@ -48,3 +48,18 @@ jobs:
       # node_modules FOD landed in the cache). Build the binary explicitly
       # so the thing consumers actually run gets cached too.
       - run: nix build .#okf -L
+
+  # Windows has no Nix runner, so it runs the same unit tests under plain bun
+  # (npm-installed okf is the supported path there). The runner checks out
+  # with core.autocrlf=true, so this also covers CRLF bundles.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun test

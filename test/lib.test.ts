@@ -1,5 +1,8 @@
 // lib.ts frontmatter core + OKF v0.2 readers (SPEC §5, §6.2, §7, §13).
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   asVerifiedList,
   extractCitationsSection,
@@ -12,10 +15,12 @@ import {
   isStale,
   parseFrontmatter,
   pathKind,
+  relUnder,
   resolvePathField,
   sourceId,
   statusOf,
   trustTier,
+  walkMd,
 } from "../lib";
 
 const SPEC_REVENUE = `---
@@ -79,6 +84,37 @@ describe("parseFrontmatter", () => {
     expect(parseFrontmatter("---\ntype: [unclosed\n---\n").fmError).toMatch(/^invalid YAML/);
     expect(parseFrontmatter("---\n- a\n- b\n---\n").fmError).toBe("frontmatter must be a YAML mapping");
     expect(parseFrontmatter("---\n# only a comment\n---\nb").fm).toEqual({});
+  });
+
+  test("CRLF files parse at both fences; the body keeps its line endings", () => {
+    const { fm, fmError, body } = parseFrontmatter("---\r\ntype: X\r\ntags: [a, b]\r\ntitle: 'Issue: 42'\r\n---\r\nbody\r\n");
+    expect(fmError).toBeNull();
+    expect(fm).toEqual({ type: "X", tags: ["a", "b"], title: "Issue: 42" });
+    expect(body).toBe("body\r\n");
+    expect(parseFrontmatter("---\r\ntype: X\r\n").fmError).toBe("unterminated frontmatter block");
+  });
+});
+
+describe("native paths become /-separated rel paths", () => {
+  test("relUnder: inside, the root itself, escapes, and ..-prefixed names", () => {
+    const root = resolve("/b");
+    expect(relUnder(root, resolve(root, "tables/customers.md"))).toBe("tables/customers.md");
+    expect(relUnder(root, root)).toBeNull();
+    expect(relUnder(root, resolve(root, "../etc/passwd"))).toBeNull();
+    expect(relUnder(root, resolve("/bundle/x.md"))).toBeNull(); // shares a prefix, not a parent
+    expect(relUnder(root, resolve(root, "..notes/x.md"))).toBe("..notes/x.md"); // a name, not a parent
+  });
+
+  test("walkMd lists nested docs with / whatever the platform separator", () => {
+    const dir = mkdtempSync(join(tmpdir(), "okf-walk-"));
+    try {
+      mkdirSync(join(dir, "tables", "sub"), { recursive: true });
+      writeFileSync(join(dir, "tables", "sub", "a.md"), "---\ntype: T\n---\n");
+      writeFileSync(join(dir, "b.md"), "---\ntype: T\n---\n");
+      expect(walkMd(dir)).toEqual(["b.md", "tables/sub/a.md"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

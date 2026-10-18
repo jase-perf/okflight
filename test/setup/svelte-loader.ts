@@ -13,7 +13,8 @@ plugin({
     // bun test resolves package exports with the "default" (server) condition
     // and has no --conditions flag; swap svelte's server entries for their
     // client siblings (same dir, so relative imports resolve identically).
-    b.onLoad({ filter: /svelte\/src\/(?:[^/]+\/)*index-server\.js$/ }, (args) => ({
+    // Either separator: args.path is native, so backslashed on Windows.
+    b.onLoad({ filter: /svelte[\\/]src[\\/](?:[^\\/]+[\\/])*index-server\.js$/ }, (args) => ({
       contents: readFileSync(args.path.replace(/index-server\.js$/, "index-client.js"), "utf8"),
       loader: "js",
     }));
