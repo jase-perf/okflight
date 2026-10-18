@@ -44,7 +44,7 @@ import {
   STATUSES,
   str,
   SUPPORTED_OKF_VERSIONS,
-  walkMd,
+  bundleFilter, walkMd,
   type FM,
 } from "./lib";
 
@@ -268,7 +268,7 @@ function hasComputationFence(body: string): boolean {
   return false;
 }
 
-const files = walkMd(bundle);
+const files = walkMd(bundle, bundleFilter(cfg.viz.bundle.include, cfg.viz.bundle.exclude));
 for (const rel of files) {
   const doc = parseDoc(bundle, rel);
   const base = rel.split("/").pop()!;

@@ -16,6 +16,10 @@ export interface VizConfig {
     dir: string;
     /** Output file, relative to the bundle dir. */
     out: string;
+    /** Bundle-relative globs a .md must match to be a concept; empty = every .md. */
+    include: string[];
+    /** Bundle-relative globs that keep a .md out of the bundle, applied after include. */
+    exclude: string[];
   };
   display: {
     /** <title> = "<name> — <title>". */
@@ -128,7 +132,7 @@ const GENERIC_ABOUT =
   "Click a node to read its document.";
 
 const defaults = (): VizConfig => ({
-  bundle: { dir: DEFAULT_BUNDLE_DIR, out: "viz.html" },
+  bundle: { dir: DEFAULT_BUNDLE_DIR, out: "viz.html", include: [], exclude: [] },
   display: {
     title: "OKF knowledge graph",
     badge: "OKFlight",
@@ -224,6 +228,8 @@ export function normalizeVizConfig(raw: unknown, opts?: { strict?: boolean; warn
       section("bundle", (s) => {
         field(s, "bundle", "dir", asStr((v) => (cfg.bundle.dir = stripSlash(v))));
         field(s, "bundle", "out", asStr((v) => (cfg.bundle.out = stripSlash(v))));
+        field(s, "bundle", "include", asStrArr((a) => (cfg.bundle.include = a)));
+        field(s, "bundle", "exclude", asStrArr((a) => (cfg.bundle.exclude = a)));
       });
       section("display", (s) => {
         field(s, "display", "title", asStr((v) => (cfg.display.title = v)));
@@ -380,6 +386,9 @@ export function normalizeVizConfig(raw: unknown, opts?: { strict?: boolean; warn
       if (!p) errors.push(`${why}: must not be empty`);
       else if (p.split("/").includes("..") || p.startsWith("/")) errors.push(`${why}: must be a relative path without ".."`);
     }
+    for (const [globs, why] of [[cfg.bundle.include, "bundle.include"], [cfg.bundle.exclude, "bundle.exclude"]] as const)
+      for (const g of globs)
+        if (!g || g.startsWith("/") || g.split("/").includes("..")) errors.push(`${why}: '${g}' must be a bundle-relative glob without ".."`);
     for (const [list, label] of [
       [cfg.taxonomy.types, "taxonomy.types"],
       [cfg.taxonomy.groupOrder, "taxonomy.group-order"],
