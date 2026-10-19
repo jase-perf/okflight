@@ -28,16 +28,20 @@ import {
   extractFootnoteDefs,
   extractFootnoteRefs,
   extractLinks,
+  type FM,
+  idsByBasename,
   isActor,
   isExternal,
   isIsoDateTime,
   isPlainObject,
   isStale,
+  linkFieldValues,
   list,
   obj,
   OKF_VERSION,
   parseDoc,
   pathKind,
+  resolveConceptRef,
   resolveLink,
   resolvePathField,
   resolvePathFieldLenient,
@@ -45,7 +49,6 @@ import {
   str,
   SUPPORTED_OKF_VERSIONS,
   walkMd,
-  type FM,
 } from "./lib";
 
 const STRICT = process.argv.includes("--strict");
@@ -269,6 +272,10 @@ function hasComputationFence(body: string): boolean {
 }
 
 const files = walkMd(bundle);
+// Concept ids, for resolving frontmatter link fields ([bundle] link-fields).
+const linkFields = cfg.viz.bundle.linkFields;
+const conceptIds = new Set(files.filter((f) => !reserved.has(f.split("/").pop()!)).map((f) => f.slice(0, -3)));
+const conceptsByBase = idsByBasename(conceptIds);
 for (const rel of files) {
   const doc = parseDoc(bundle, rel);
   const base = rel.split("/").pop()!;
@@ -298,6 +305,16 @@ for (const rel of files) {
       const tags = list(doc.fm, "tags");
       if (doc.fm.tags !== undefined && (!tags || !tags.every((t) => typeof t === "string")))
         errors.push(`${rel}: 'tags' must be a list of strings`);
+      for (const field of linkFields) {
+        const raw = doc.fm[field];
+        if (raw !== undefined && raw !== null && typeof raw !== "string" && !(Array.isArray(raw) && raw.every((x) => typeof x === "string")))
+          errors.push(`${rel}: '${field}' must be a string or a list of strings (it is a link field)`);
+        for (const v of linkFieldValues(doc.fm, field)) {
+          const r = resolveConceptRef(v, rel, conceptIds, conceptsByBase);
+          if (r.ambiguous) warnings.push(`${rel}: ${field} '${v}' matches several concepts (${r.ambiguous.join(", ")}) — use a path`);
+          else if (!r.id) warnings.push(`${rel}: ${field} '${v}' does not resolve to a concept`);
+        }
+      }
       if (doc.fm.resource !== undefined && typeof doc.fm.resource !== "string") errors.push(`${rel}: 'resource' must be a URI or path`);
       else checkPathField(rel, "resource", doc.fm.resource);
       if (V02_KEYS.some((k) => doc.fm![k] !== undefined)) sawV02Fields = true;

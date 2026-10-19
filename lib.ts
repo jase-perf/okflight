@@ -403,6 +403,68 @@ export function isExternal(target: string): boolean {
   return /^[a-z][a-z0-9+.-]*:/.test(target) || target.startsWith("#");
 }
 
+/** The values of a frontmatter link field (`[bundle] link-fields`, e.g.
+ *  `related:`), as written: a scalar or a list of strings, with an Obsidian
+ *  `[[x]]` / `[[x|alias]]` wrapper and any `#fragment` removed. Non-string
+ *  items are skipped (validate reports the field's type separately). */
+export function linkFieldValues(fm: FM | null, field: string): string[] {
+  const v = fm?.[field];
+  const items = Array.isArray(v) ? v : v === undefined || v === null ? [] : [v];
+  return items
+    .filter((x): x is string => typeof x === "string")
+    .map((x) => x.trim().replace(/^\[\[(.*?)(?:\|.*)?\]\]$/, "$1").split("#")[0]!.trim())
+    .filter(Boolean);
+}
+
+/** Concept ids grouped by basename, for resolving bare link-field names. */
+export function idsByBasename(ids: Iterable<string>): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const id of ids) {
+    const b = id.slice(id.lastIndexOf("/") + 1);
+    m.set(b, [...(m.get(b) ?? []), id]);
+  }
+  return m;
+}
+
+/** Resolve one link-field value to a concept id: an exact bundle-relative id
+ *  (leading `/` and `.md` optional), then a path relative to the doc, then —
+ *  for a bare name — the one concept with that basename (Obsidian's rule for
+ *  bare links). A bare name several concepts share resolves to nothing and
+ *  lists them in `ambiguous`, rather than guessing. */
+export function resolveConceptRef(
+  value: string,
+  docRel: string,
+  ids: ReadonlySet<string>,
+  byBase: ReadonlyMap<string, string[]>,
+): { id: string | null; ambiguous?: string[] } {
+  if (isExternal(value)) return { id: null };
+  const v = value.replace(/\.md$/, "");
+  const rooted = v.replace(/^\/+/, "");
+  if (ids.has(rooted)) return { id: rooted };
+  if (!v.startsWith("/")) {
+    const dir = docRel.includes("/") ? docRel.slice(0, docRel.lastIndexOf("/")) : "";
+    const rel = posixNormalize(dir ? `${dir}/${v}` : v);
+    if (rel !== null && ids.has(rel)) return { id: rel };
+  }
+  if (v.includes("/")) return { id: null };
+  const hits = byBase.get(v) ?? [];
+  if (hits.length === 1) return { id: hits[0]! };
+  return hits.length ? { id: null, ambiguous: [...hits].sort() } : { id: null };
+}
+
+/** Collapse ./ and ../ in a /-separated relative path; null if it climbs out. */
+function posixNormalize(p: string): string | null {
+  const out: string[] = [];
+  for (const seg of p.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      if (!out.length) return null;
+      out.pop();
+    } else out.push(seg);
+  }
+  return out.join("/");
+}
+
 /** Resolve a doc-relative link target to a bundle-relative path (or null if it escapes). */
 export function resolveLink(root: string, docRel: string, target: string): string | null {
   const clean = target.split("#")[0];

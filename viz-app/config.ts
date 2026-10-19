@@ -16,6 +16,9 @@ export interface VizConfig {
     dir: string;
     /** Output file, relative to the bundle dir. */
     out: string;
+    /** Frontmatter keys whose values link to other concepts (e.g. `related`):
+     *  viz draws them as edges, validate checks they resolve. */
+    linkFields: string[];
   };
   display: {
     /** <title> = "<name> — <title>". */
@@ -128,7 +131,7 @@ const GENERIC_ABOUT =
   "Click a node to read its document.";
 
 const defaults = (): VizConfig => ({
-  bundle: { dir: DEFAULT_BUNDLE_DIR, out: "viz.html" },
+  bundle: { dir: DEFAULT_BUNDLE_DIR, out: "viz.html", linkFields: [] },
   display: {
     title: "OKF knowledge graph",
     badge: "OKFlight",
@@ -224,6 +227,7 @@ export function normalizeVizConfig(raw: unknown, opts?: { strict?: boolean; warn
       section("bundle", (s) => {
         field(s, "bundle", "dir", asStr((v) => (cfg.bundle.dir = stripSlash(v))));
         field(s, "bundle", "out", asStr((v) => (cfg.bundle.out = stripSlash(v))));
+        field(s, "bundle", "linkFields", asStrArr((a) => (cfg.bundle.linkFields = a)));
       });
       section("display", (s) => {
         field(s, "display", "title", asStr((v) => (cfg.display.title = v)));
@@ -380,6 +384,7 @@ export function normalizeVizConfig(raw: unknown, opts?: { strict?: boolean; warn
       if (!p) errors.push(`${why}: must not be empty`);
       else if (p.split("/").includes("..") || p.startsWith("/")) errors.push(`${why}: must be a relative path without ".."`);
     }
+    for (const f of cfg.bundle.linkFields) if (!f.trim()) errors.push("bundle.link-fields: entries must not be empty");
     for (const [list, label] of [
       [cfg.taxonomy.types, "taxonomy.types"],
       [cfg.taxonomy.groupOrder, "taxonomy.group-order"],
