@@ -44,7 +44,7 @@ describe("normalizeVizConfig", () => {
   test("empty/undefined input yields generic defaults", () => {
     for (const raw of [undefined, null, {}]) {
       const c = normalizeVizConfig(raw);
-      expect(c.bundle).toEqual({ dir: "knowledge", out: "viz.html" });
+      expect(c.bundle).toEqual({ dir: "knowledge", out: "viz.html", linkFields: [] });
       expect(c.display.badge).toBe("OKFlight");
       expect(c.display.fallbackName).toBe("OKF bundle");
       expect(c.display.name).toBeNull();
@@ -110,6 +110,15 @@ describe("normalizeVizConfig", () => {
     expect(() => normalizeVizConfig({ facet: { platform: { bogus: 1 } } }, { strict: true })).toThrow(
       /facet\.platform\.bogus: unknown key/,
     );
+  });
+
+  test("bundle link-fields: a list of frontmatter keys", () => {
+    expect(normalizeVizConfig({ bundle: { "link-fields": ["related", "see-also"] } }, { strict: true }).bundle.linkFields).toEqual([
+      "related",
+      "see-also",
+    ]);
+    expect(() => normalizeVizConfig({ bundle: { "link-fields": "related" } }, { strict: true })).toThrow(VizConfigError);
+    expect(() => normalizeVizConfig({ bundle: { "link-fields": [" "] } }, { strict: true })).toThrow(/bundle\.link-fields/);
   });
 
   test("strict: type mismatches error; lenient keeps defaults", () => {

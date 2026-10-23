@@ -10,12 +10,15 @@ import {
   extractFootnoteRefs,
   fmToYaml,
   generatedAt,
+  idsByBasename,
   isActor,
   isIsoDateTime,
   isStale,
+  linkFieldValues,
   parseFrontmatter,
   pathKind,
   relUnder,
+  resolveConceptRef,
   resolvePathField,
   sourceId,
   statusOf,
@@ -335,5 +338,29 @@ describe("extractCitationsSection — prefixed items (dotfiles shapes)", () => {
 describe("footnote refs ignore inline code (viewer parity)", () => {
   test("a [^id] inside backticks is prose about footnotes, not a citation", () => {
     expect(extractFootnoteRefs("write `…documented.[^manual]` to cite; real one here[^real]\n\n[^real]: r\n")).toEqual(["real"]);
+  });
+});
+
+describe("frontmatter link fields", () => {
+  test("linkFieldValues: scalar or list, [[wikilink]] wrappers and #fragments dropped", () => {
+    expect(linkFieldValues({ related: ["a", "[[b]]", "[[c|C]]", "d#Heading", 7, ""] }, "related")).toEqual(["a", "b", "c", "d"]);
+    expect(linkFieldValues({ related: "solo" }, "related")).toEqual(["solo"]);
+    expect(linkFieldValues({}, "related")).toEqual([]);
+    expect(linkFieldValues(null, "related")).toEqual([]);
+  });
+
+  test("resolveConceptRef: exact id, doc-relative path, unique basename, never a guess", () => {
+    const ids = new Set(["wiki/adult-adhd", "wiki/sub/notes", "sources/web/x", "a/dup", "b/dup"]);
+    const byBase = idsByBasename(ids);
+    const r = (v: string, doc = "wiki/page.md") => resolveConceptRef(v, doc, ids, byBase);
+    expect(r("wiki/adult-adhd").id).toBe("wiki/adult-adhd");
+    expect(r("/sources/web/x.md").id).toBe("sources/web/x");
+    expect(r("sub/notes").id).toBe("wiki/sub/notes"); // relative to wiki/
+    expect(r("../sources/web/x.md").id).toBe("sources/web/x");
+    expect(r("adult-adhd").id).toBe("wiki/adult-adhd"); // Obsidian-style bare name
+    expect(r("dup")).toEqual({ id: null, ambiguous: ["a/dup", "b/dup"] });
+    expect(r("missing")).toEqual({ id: null });
+    expect(r("../../escape").id).toBeNull();
+    expect(r("https://example.com/x.md").id).toBeNull();
   });
 });
