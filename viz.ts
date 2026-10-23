@@ -14,12 +14,15 @@ import { loadContext } from "./config-cli";
 import {
   extractLinks,
   firstHeading,
+  idsByBasename,
   indexBlurb,
   isExternal,
+  linkFieldValues,
   nowISO,
   parseDoc,
   pathFieldValues,
   pathKind,
+  resolveConceptRef,
   resolveLink,
   resolvePathFieldLenient,
   STATUSES,
@@ -131,6 +134,16 @@ for (const n of nodes) {
     const t = resolved.replace(/\.md$/, "");
     if (ids.has(t) && t !== n.id) edges.push({ s: n.id, t });
   }
+}
+// Frontmatter link fields ([bundle] link-fields, e.g. related:) are edges too.
+if (cfg.bundle.linkFields.length) {
+  const byBase = idsByBasename(ids);
+  for (const n of nodes)
+    for (const field of cfg.bundle.linkFields)
+      for (const v of linkFieldValues(n.fm, field)) {
+        const t = resolveConceptRef(v, n.id + ".md", ids, byBase).id;
+        if (t && t !== n.id) edges.push({ s: n.id, t });
+      }
 }
 const seen = new Set<string>();
 const dedupedEdges = edges.filter((e) => {

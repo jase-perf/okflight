@@ -191,3 +191,29 @@ describe("code-review follow-ups", () => {
     expect(r.errors).toEqual([]);
   });
 });
+
+describe("okf validate: [bundle] link-fields", () => {
+  const T = "---\ntype: Note\ntitle: t\ndescription: d\ngenerated: { by: human:x, at: 2026-01-01T00:00:00Z }\n";
+  test("unresolved and ambiguous values warn; resolvable ones (any form) pass; bad types error", () => {
+    const root = workspace({
+      "a.md": T + "related: [b, sub/c, '[[d/dup]]', ghost, dup]\n---\n",
+      "b.md": T + "related: a\n---\n",
+      "sub/c.md": T + "---\n",
+      "d/dup.md": T + "---\n",
+      "e/dup.md": T + "---\n",
+      "f.md": T + "related: { not: a list }\n---\n",
+    });
+    writeFileSync(join(root, "okflight.toml"), '[bundle]\ndir = "kb"\nlink-fields = ["related"]\n[vcs]\nprovider = "none"\n');
+    const r = run(root);
+    expect(r.warnings).toContain("warn:  a.md: related 'ghost' does not resolve to a concept");
+    expect(r.warnings).toContain("warn:  a.md: related 'dup' matches several concepts (d/dup, e/dup) — use a path");
+    expect(r.warnings.filter((w) => /a\.md: related '(b|sub\/c|d\/dup)'/.test(w))).toEqual([]);
+    expect(r.warnings.filter((w) => w.includes("b.md: related"))).toEqual([]);
+    expect(r.errors).toContain("ERROR: f.md: 'related' must be a string or a list of strings (it is a link field)");
+  });
+
+  test("without link-fields configured, related: is just another key", () => {
+    const root = workspace({ "a.md": T + "related: [ghost]\n---\n" });
+    expect(run(root).warnings.filter((w) => w.includes("related"))).toEqual([]);
+  });
+});
