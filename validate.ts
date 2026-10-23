@@ -18,7 +18,7 @@
 // --strict promotes warnings to errors.
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { loadContext } from "./config-cli";
 import {
   asVerifiedList,
@@ -28,24 +28,28 @@ import {
   extractFootnoteDefs,
   extractFootnoteRefs,
   extractLinks,
+  type FM,
+  idsByBasename,
   isActor,
   isExternal,
   isIsoDateTime,
   isPlainObject,
   isStale,
+  linkFieldValues,
   list,
   obj,
   OKF_VERSION,
   parseDoc,
   pathKind,
+  resolveConceptRef,
   resolveLink,
   resolvePathField,
   resolvePathFieldLenient,
   STATUSES,
   str,
   SUPPORTED_OKF_VERSIONS,
-  bundleFilter, walkMd,
-  type FM,
+  bundleFilter,
+  walkMd,
 } from "./lib";
 
 const STRICT = process.argv.includes("--strict");
@@ -99,7 +103,7 @@ function checkPathField(rel: string, field: string, value: unknown) {
     return;
   }
   if (repoLinks !== "check") return;
-  const docRel = resolveLink(repo, join(cfg.viz.bundle.dir, rel), value);
+  const docRel = resolveLink(repo, posix.join(cfg.viz.bundle.dir, rel), value);
   const rootRel = value.split("#")[0]!.split("/").includes("..") ? null : value.split("#")[0]!;
   if (docRel === null && rootRel === null) errors.push(`${rel}: ${field} '${value}' escapes the repository`);
   else if (!(docRel && existsSync(join(repo, docRel))) && !(rootRel && existsSync(join(repo, rootRel))))
@@ -269,6 +273,10 @@ function hasComputationFence(body: string): boolean {
 }
 
 const files = walkMd(bundle, bundleFilter(cfg.viz.bundle.include, cfg.viz.bundle.exclude));
+// Concept ids, for resolving frontmatter link fields ([bundle] link-fields).
+const linkFields = cfg.viz.bundle.linkFields;
+const conceptIds = new Set(files.filter((f) => !reserved.has(f.split("/").pop()!)).map((f) => f.slice(0, -3)));
+const conceptsByBase = idsByBasename(conceptIds);
 for (const rel of files) {
   const doc = parseDoc(bundle, rel);
   const base = rel.split("/").pop()!;
@@ -298,6 +306,16 @@ for (const rel of files) {
       const tags = list(doc.fm, "tags");
       if (doc.fm.tags !== undefined && (!tags || !tags.every((t) => typeof t === "string")))
         errors.push(`${rel}: 'tags' must be a list of strings`);
+      for (const field of linkFields) {
+        const raw = doc.fm[field];
+        if (raw !== undefined && raw !== null && typeof raw !== "string" && !(Array.isArray(raw) && raw.every((x) => typeof x === "string")))
+          errors.push(`${rel}: '${field}' must be a string or a list of strings (it is a link field)`);
+        for (const v of linkFieldValues(doc.fm, field)) {
+          const r = resolveConceptRef(v, rel, conceptIds, conceptsByBase);
+          if (r.ambiguous) warnings.push(`${rel}: ${field} '${v}' matches several concepts (${r.ambiguous.join(", ")}) — use a path`);
+          else if (!r.id) warnings.push(`${rel}: ${field} '${v}' does not resolve to a concept`);
+        }
+      }
       if (doc.fm.resource !== undefined && typeof doc.fm.resource !== "string") errors.push(`${rel}: 'resource' must be a URI or path`);
       else checkPathField(rel, "resource", doc.fm.resource);
       if (V02_KEYS.some((k) => doc.fm![k] !== undefined)) sawV02Fields = true;
@@ -324,7 +342,7 @@ for (const rel of files) {
       errors.push(`${rel}: link '${target}' leaves the bundle — profile forbids repo links`);
     } else if (repoLinks === "check") {
       // Escapes the bundle — allowed (points into the repo), but verify it resolves.
-      const inRepo = resolveLink(repo, join(cfg.viz.bundle.dir, rel), target);
+      const inRepo = resolveLink(repo, posix.join(cfg.viz.bundle.dir, rel), target);
       if (inRepo === null) errors.push(`${rel}: link '${target}' escapes the repository`);
       else if (!existsSync(join(repo, inRepo))) warnings.push(`${rel}: dangling repo link '${target}'`);
     }

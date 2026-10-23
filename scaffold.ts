@@ -7,7 +7,7 @@
 // without --force.
 
 import { readFileSync } from "node:fs";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, join, posix } from "node:path";
 import { loadContext } from "./config-cli";
 import type { CollectEntry } from "./config-cli";
 import { createScaffoldContext, expandTemplate, type FM, type ScaffoldContext } from "./scaffold-api";
@@ -80,7 +80,7 @@ function runCollect(entry: CollectEntry) {
     const out = expandTemplate(entry.output, env);
     // The ../.. chain from the output doc's directory to the workspace root,
     // for authoring profile-legal file-relative links in template bodies.
-    const depth = join(ctx.cfg.viz.bundle.dir, out).split("/").length - 1;
+    const depth = posix.join(ctx.cfg.viz.bundle.dir, out).split("/").length - 1;
     env.repo = Array(depth).fill("..").join("/");
     const commentText = entry.comment
       ? sctx.leadingComment(readFileSync(join(ctx.root, path), "utf8"), entry.comment)

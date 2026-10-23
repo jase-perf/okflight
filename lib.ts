@@ -9,7 +9,7 @@
 // workspace context live in config-cli.ts.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname, relative, isAbsolute, sep } from "node:path";
 
 // The v0.2 readers (trust tier, status, staleness, generated.at fallback) and
 // the FM type live in the browser-safe viz-app/okf-fields.ts so the viewer
@@ -34,6 +34,16 @@ interface ConceptDoc {
 // Reserved filenames and required/recommended frontmatter fields are profile
 // policy, configured via okflight.toml's [profile] section (defaults in
 // config-cli.ts) — commands read them from the loaded context.
+
+/** `abs` as a `/`-separated path relative to `root`, or null when it is `root`
+ *  itself or falls outside it (including another drive on Windows). Every
+ *  bundle- and repo-relative path in this tooling is `/`-separated whatever
+ *  the platform, so native paths are converted here, at the boundary. */
+export function relUnder(root: string, abs: string): string | null {
+  const r = relative(root, abs);
+  if (!r || r === ".." || r.startsWith(".." + sep) || isAbsolute(r)) return null;
+  return sep === "/" ? r : r.split(sep).join("/");
+}
 
 /** The `[bundle] include` / `exclude` globs as one filter over
  *  bundle-relative paths. `doc`: is this .md part of the bundle (matches an
@@ -74,7 +84,7 @@ export function walkMd(root: string, filter?: BundleFilter): string[] {
     for (const entry of readdirSync(dir).sort()) {
       if (entry.startsWith(".") || entry.startsWith("_")) continue;
       const abs = join(dir, entry);
-      const rel = abs.slice(root.length + 1);
+      const rel = relUnder(root, abs)!;
       if (statSync(abs).isDirectory()) {
         if (!filter || filter.dir(rel)) walk(abs);
       } else if (entry.endsWith(".md") && (!filter || filter.doc(rel))) out.push(rel);
@@ -101,11 +111,16 @@ export function parseFrontmatter(raw: string): {
   fmError: string | null;
   body: string;
 } {
-  if (!raw.startsWith("---\n")) return { fm: null, fmError: null, body: raw };
-  const end = raw.indexOf("\n---\n", 4);
-  if (end === -1) return { fm: null, fmError: "unterminated frontmatter block", body: raw };
-  const block = raw.slice(4, end);
-  const body = raw.slice(end + 5);
+  // CRLF files (Windows editors, git autocrlf checkouts) are accepted at both
+  // fences; only the YAML block is normalized, the body is returned as written.
+  const open = raw.startsWith("---\n") ? 4 : raw.startsWith("---\r\n") ? 5 : 0;
+  if (!open) return { fm: null, fmError: null, body: raw };
+  const close = /\r?\n---\r?\n/g;
+  close.lastIndex = open;
+  const m = close.exec(raw);
+  if (!m) return { fm: null, fmError: "unterminated frontmatter block", body: raw };
+  const block = raw.slice(open, m.index).replace(/\r\n/g, "\n");
+  const body = raw.slice(m.index + m[0].length);
   let parsed: unknown;
   try {
     parsed = Bun.YAML.parse(lenientScalars(block));
@@ -304,8 +319,7 @@ export function resolvePathField(root: string, docRel: string, value: string): s
   if (kind === "rooted") {
     const clean = value.split("#")[0]!.slice(1); // fragments name a heading, not a file
     if (!clean) return null;
-    const abs = resolve(root, clean);
-    return abs.startsWith(root + "/") ? abs.slice(root.length + 1) : null;
+    return relUnder(root, resolve(root, clean));
   }
   return resolveLink(root, docRel, value);
 }
@@ -437,12 +451,73 @@ export function isExternal(target: string): boolean {
   return /^[a-z][a-z0-9+.-]*:/.test(target) || target.startsWith("#");
 }
 
+/** The values of a frontmatter link field (`[bundle] link-fields`, e.g.
+ *  `related:`), as written: a scalar or a list of strings, with an Obsidian
+ *  `[[x]]` / `[[x|alias]]` wrapper and any `#fragment` removed. Non-string
+ *  items are skipped (validate reports the field's type separately). */
+export function linkFieldValues(fm: FM | null, field: string): string[] {
+  const v = fm?.[field];
+  const items = Array.isArray(v) ? v : v === undefined || v === null ? [] : [v];
+  return items
+    .filter((x): x is string => typeof x === "string")
+    .map((x) => x.trim().replace(/^\[\[(.*?)(?:\|.*)?\]\]$/, "$1").split("#")[0]!.trim())
+    .filter(Boolean);
+}
+
+/** Concept ids grouped by basename, for resolving bare link-field names. */
+export function idsByBasename(ids: Iterable<string>): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const id of ids) {
+    const b = id.slice(id.lastIndexOf("/") + 1);
+    m.set(b, [...(m.get(b) ?? []), id]);
+  }
+  return m;
+}
+
+/** Resolve one link-field value to a concept id: an exact bundle-relative id
+ *  (leading `/` and `.md` optional), then a path relative to the doc, then —
+ *  for a bare name — the one concept with that basename (Obsidian's rule for
+ *  bare links). A bare name several concepts share resolves to nothing and
+ *  lists them in `ambiguous`, rather than guessing. */
+export function resolveConceptRef(
+  value: string,
+  docRel: string,
+  ids: ReadonlySet<string>,
+  byBase: ReadonlyMap<string, string[]>,
+): { id: string | null; ambiguous?: string[] } {
+  if (isExternal(value)) return { id: null };
+  const v = value.replace(/\.md$/, "");
+  const rooted = v.replace(/^\/+/, "");
+  if (ids.has(rooted)) return { id: rooted };
+  if (!v.startsWith("/")) {
+    const dir = docRel.includes("/") ? docRel.slice(0, docRel.lastIndexOf("/")) : "";
+    const rel = posixNormalize(dir ? `${dir}/${v}` : v);
+    if (rel !== null && ids.has(rel)) return { id: rel };
+  }
+  if (v.includes("/")) return { id: null };
+  const hits = byBase.get(v) ?? [];
+  if (hits.length === 1) return { id: hits[0]! };
+  return hits.length ? { id: null, ambiguous: [...hits].sort() } : { id: null };
+}
+
+/** Collapse ./ and ../ in a /-separated relative path; null if it climbs out. */
+function posixNormalize(p: string): string | null {
+  const out: string[] = [];
+  for (const seg of p.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      if (!out.length) return null;
+      out.pop();
+    } else out.push(seg);
+  }
+  return out.join("/");
+}
+
 /** Resolve a doc-relative link target to a bundle-relative path (or null if it escapes). */
 export function resolveLink(root: string, docRel: string, target: string): string | null {
   const clean = target.split("#")[0];
   if (!clean) return null;
-  const abs = resolve(root, dirname(docRel), clean);
-  return abs.startsWith(root + "/") ? abs.slice(root.length + 1) : null;
+  return relUnder(root, resolve(root, dirname(docRel), clean));
 }
 
 /** The hand-written blurb of an index.md body: prose between the top and

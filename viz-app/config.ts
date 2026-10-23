@@ -20,6 +20,9 @@ export interface VizConfig {
     include: string[];
     /** Bundle-relative globs that keep a .md out of the bundle, applied after include. */
     exclude: string[];
+    /** Frontmatter keys whose values link to other concepts (e.g. `related`):
+     *  viz draws them as edges, validate checks they resolve. */
+    linkFields: string[];
   };
   display: {
     /** <title> = "<name> — <title>". */
@@ -132,7 +135,7 @@ const GENERIC_ABOUT =
   "Click a node to read its document.";
 
 const defaults = (): VizConfig => ({
-  bundle: { dir: DEFAULT_BUNDLE_DIR, out: "viz.html", include: [], exclude: [] },
+  bundle: { dir: DEFAULT_BUNDLE_DIR, out: "viz.html", include: [], exclude: [], linkFields: [] },
   display: {
     title: "OKF knowledge graph",
     badge: "OKFlight",
@@ -230,6 +233,7 @@ export function normalizeVizConfig(raw: unknown, opts?: { strict?: boolean; warn
         field(s, "bundle", "out", asStr((v) => (cfg.bundle.out = stripSlash(v))));
         field(s, "bundle", "include", asStrArr((a) => (cfg.bundle.include = a)));
         field(s, "bundle", "exclude", asStrArr((a) => (cfg.bundle.exclude = a)));
+        field(s, "bundle", "linkFields", asStrArr((a) => (cfg.bundle.linkFields = a)));
       });
       section("display", (s) => {
         field(s, "display", "title", asStr((v) => (cfg.display.title = v)));
@@ -389,6 +393,7 @@ export function normalizeVizConfig(raw: unknown, opts?: { strict?: boolean; warn
     for (const [globs, why] of [[cfg.bundle.include, "bundle.include"], [cfg.bundle.exclude, "bundle.exclude"]] as const)
       for (const g of globs)
         if (!g || g.startsWith("/") || g.split("/").includes("..")) errors.push(`${why}: '${g}' must be a bundle-relative glob without ".."`);
+    for (const f of cfg.bundle.linkFields) if (!f.trim()) errors.push("bundle.link-fields: entries must not be empty");
     for (const [list, label] of [
       [cfg.taxonomy.types, "taxonomy.types"],
       [cfg.taxonomy.groupOrder, "taxonomy.group-order"],
