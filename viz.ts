@@ -9,7 +9,7 @@
 // optional ./okflight.toml at the repo root (config-cli.ts); absent -> generic.
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { extname, join, posix } from "node:path";
 import { loadContext } from "./config-cli";
 import {
   extractLinks,
@@ -365,11 +365,11 @@ for (const n of nodes) {
       // A concept doc is already a node — the panel links it by id, never
       // as a second raw-file embed.
       if (r.rel.endsWith(".md") && ids.has(r.rel.slice(0, -3))) continue;
-      addRepoPath(join(cfg.bundle.dir, r.rel), n.id);
+      addRepoPath(posix.join(cfg.bundle.dir, r.rel), n.id);
     } else if (kind === "relative") {
       // Outside the bundle: doc-relative into the repo (as validate resolves
       // it), else workspace-relative like `resource`.
-      const inRepo = resolveLink(repo, join(cfg.bundle.dir, n.id + ".md"), value);
+      const inRepo = resolveLink(repo, posix.join(cfg.bundle.dir, n.id + ".md"), value);
       if (inRepo && !inRepo.startsWith(cfg.bundle.dir + "/") && existsSync(join(repo, inRepo))) addRepoPath(inRepo, n.id);
       else addRepoPath(value, n.id);
     }
@@ -377,7 +377,7 @@ for (const n of nodes) {
   for (const target of extractLinks(n.body)) {
     if (isExternal(target)) continue;
     if (resolveLink(bundle, n.id + ".md", target)) continue; // stays inside the bundle
-    const inRepo = resolveLink(repo, join(cfg.bundle.dir, n.id + ".md"), target);
+    const inRepo = resolveLink(repo, posix.join(cfg.bundle.dir, n.id + ".md"), target);
     if (inRepo && !inRepo.startsWith(cfg.bundle.dir + "/")) addRepoPath(inRepo, n.id);
   }
   // Bare repo-path mentions in prose (e.g. "./src/lib/parser.py")

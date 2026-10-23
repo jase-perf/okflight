@@ -17,8 +17,9 @@
 // (okflight or okf, per the bin symlink) rather than "bun okf.ts".
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { basename } from "node:path";
+import { existsSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const entry = fileURLToPath(new URL("../okf.ts", import.meta.url));
@@ -41,9 +42,25 @@ if (typeof Bun !== "undefined") {
   await import(entry);
 } else {
   const isWin = process.platform === "win32";
-  const local = ["../node_modules/.bin/bun", "../../.bin/bun"] // nested (global installs) and flat layouts
-    .map((rel) => fileURLToPath(new URL(rel + (isWin ? ".cmd" : ""), import.meta.url)))
-    .filter((p) => existsSync(p));
+  // The optionalDependency's binary, found by module resolution so every
+  // install layout (flat, nested, scoped, global) works. Its postinstall
+  // renames the platform binary to bin/bun.exe on every OS, and spawning it
+  // directly needs no shell.
+  let pkgBun = null;
+  try {
+    pkgBun = join(dirname(createRequire(import.meta.url).resolve("bun/package.json")), "bin", "bun.exe");
+  } catch {} // not installed (--no-optional, unsupported platform)
+  // With install scripts skipped (--ignore-scripts, pnpm's default), bun.exe
+  // stays a small text placeholder, and every local candidate (the .bin shims
+  // too) would end up running it: an opaque spawn error on Windows, the text
+  // run as a shell script on POSIX. The real binary is tens of MB.
+  const placeholder = pkgBun !== null && existsSync(pkgBun) && statSync(pkgBun).size < 1024 * 1024;
+  // .bin shims as a fallback: nested (global installs) and flat layouts, the
+  // flat one three levels up because this package is scoped
+  // (node_modules/@kriswill/okflight/bin/).
+  const shims = ["../node_modules/.bin/bun", "../../../.bin/bun"]
+    .map((rel) => fileURLToPath(new URL(rel + (isWin ? ".cmd" : ""), import.meta.url)));
+  const local = placeholder ? [] : [...(pkgBun ? [pkgBun] : []), ...shims].filter((p) => existsSync(p));
   for (const bun of ["bun", ...local]) {
     // .cmd shims need a shell; node refuses to spawn them directly.
     const r = spawnSync(bun, [entry, ...process.argv.slice(2)], { stdio: "inherit", shell: bun.endsWith(".cmd") });
@@ -51,11 +68,15 @@ if (typeof Bun !== "undefined") {
     if (r.error) throw r.error;
     process.exit(r.status ?? 1);
   }
-  // Every candidate ENOENT'd — no bun anywhere.
+  // Every candidate ENOENT'd — no usable bun anywhere.
   console.error(
     "okf: the Bun runtime is required (this CLI uses Bun.build/Bun.TOML at runtime and cannot run under node).\n" +
-      "     Installing the okflight package normally brings bun along as an optional dependency; it seems to be\n" +
-      "     missing here (--no-optional install, or an unsupported platform). Install bun from https://bun.sh\n" +
+      (placeholder
+        ? "     The bun optional dependency is installed but its install script never ran (--ignore-scripts, or\n" +
+          "     pnpm without approved builds), so it has no binary. Run `npm rebuild bun` (pnpm: `pnpm approve-builds`),\n" +
+          "     or install bun from https://bun.sh\n"
+        : "     Installing the okflight package normally brings bun along as an optional dependency; it seems to be\n" +
+          "     missing here (--no-optional install, or an unsupported platform). Install bun from https://bun.sh\n") +
       "     — e.g. `npm install -g bun` or `curl -fsSL https://bun.sh/install | bash` — then re-run.",
   );
   process.exit(1);

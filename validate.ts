@@ -18,7 +18,7 @@
 // --strict promotes warnings to errors.
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { loadContext } from "./config-cli";
 import {
   asVerifiedList,
@@ -102,7 +102,7 @@ function checkPathField(rel: string, field: string, value: unknown) {
     return;
   }
   if (repoLinks !== "check") return;
-  const docRel = resolveLink(repo, join(cfg.viz.bundle.dir, rel), value);
+  const docRel = resolveLink(repo, posix.join(cfg.viz.bundle.dir, rel), value);
   const rootRel = value.split("#")[0]!.split("/").includes("..") ? null : value.split("#")[0]!;
   if (docRel === null && rootRel === null) errors.push(`${rel}: ${field} '${value}' escapes the repository`);
   else if (!(docRel && existsSync(join(repo, docRel))) && !(rootRel && existsSync(join(repo, rootRel))))
@@ -341,7 +341,7 @@ for (const rel of files) {
       errors.push(`${rel}: link '${target}' leaves the bundle — profile forbids repo links`);
     } else if (repoLinks === "check") {
       // Escapes the bundle — allowed (points into the repo), but verify it resolves.
-      const inRepo = resolveLink(repo, join(cfg.viz.bundle.dir, rel), target);
+      const inRepo = resolveLink(repo, posix.join(cfg.viz.bundle.dir, rel), target);
       if (inRepo === null) errors.push(`${rel}: link '${target}' escapes the repository`);
       else if (!existsSync(join(repo, inRepo))) warnings.push(`${rel}: dangling repo link '${target}'`);
     }

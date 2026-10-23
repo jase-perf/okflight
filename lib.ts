@@ -9,7 +9,7 @@
 // workspace context live in config-cli.ts.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname, relative, isAbsolute, sep } from "node:path";
 
 // The v0.2 readers (trust tier, status, staleness, generated.at fallback) and
 // the FM type live in the browser-safe viz-app/okf-fields.ts so the viewer
@@ -35,6 +35,16 @@ interface ConceptDoc {
 // policy, configured via okflight.toml's [profile] section (defaults in
 // config-cli.ts) — commands read them from the loaded context.
 
+/** `abs` as a `/`-separated path relative to `root`, or null when it is `root`
+ *  itself or falls outside it (including another drive on Windows). Every
+ *  bundle- and repo-relative path in this tooling is `/`-separated whatever
+ *  the platform, so native paths are converted here, at the boundary. */
+export function relUnder(root: string, abs: string): string | null {
+  const r = relative(root, abs);
+  if (!r || r === ".." || r.startsWith(".." + sep) || isAbsolute(r)) return null;
+  return sep === "/" ? r : r.split(sep).join("/");
+}
+
 /** All .md files under root, as sorted bundle-relative paths. */
 export function walkMd(root: string): string[] {
   const out: string[] = [];
@@ -43,7 +53,7 @@ export function walkMd(root: string): string[] {
       if (entry.startsWith(".") || entry.startsWith("_")) continue;
       const abs = join(dir, entry);
       if (statSync(abs).isDirectory()) walk(abs);
-      else if (entry.endsWith(".md")) out.push(abs.slice(root.length + 1));
+      else if (entry.endsWith(".md")) out.push(relUnder(root, abs)!);
     }
   };
   walk(root);
@@ -67,11 +77,16 @@ export function parseFrontmatter(raw: string): {
   fmError: string | null;
   body: string;
 } {
-  if (!raw.startsWith("---\n")) return { fm: null, fmError: null, body: raw };
-  const end = raw.indexOf("\n---\n", 4);
-  if (end === -1) return { fm: null, fmError: "unterminated frontmatter block", body: raw };
-  const block = raw.slice(4, end);
-  const body = raw.slice(end + 5);
+  // CRLF files (Windows editors, git autocrlf checkouts) are accepted at both
+  // fences; only the YAML block is normalized, the body is returned as written.
+  const open = raw.startsWith("---\n") ? 4 : raw.startsWith("---\r\n") ? 5 : 0;
+  if (!open) return { fm: null, fmError: null, body: raw };
+  const close = /\r?\n---\r?\n/g;
+  close.lastIndex = open;
+  const m = close.exec(raw);
+  if (!m) return { fm: null, fmError: "unterminated frontmatter block", body: raw };
+  const block = raw.slice(open, m.index).replace(/\r\n/g, "\n");
+  const body = raw.slice(m.index + m[0].length);
   let parsed: unknown;
   try {
     parsed = Bun.YAML.parse(lenientScalars(block));
@@ -270,8 +285,7 @@ export function resolvePathField(root: string, docRel: string, value: string): s
   if (kind === "rooted") {
     const clean = value.split("#")[0]!.slice(1); // fragments name a heading, not a file
     if (!clean) return null;
-    const abs = resolve(root, clean);
-    return abs.startsWith(root + "/") ? abs.slice(root.length + 1) : null;
+    return relUnder(root, resolve(root, clean));
   }
   return resolveLink(root, docRel, value);
 }
@@ -469,8 +483,7 @@ function posixNormalize(p: string): string | null {
 export function resolveLink(root: string, docRel: string, target: string): string | null {
   const clean = target.split("#")[0];
   if (!clean) return null;
-  const abs = resolve(root, dirname(docRel), clean);
-  return abs.startsWith(root + "/") ? abs.slice(root.length + 1) : null;
+  return relUnder(root, resolve(root, dirname(docRel), clean));
 }
 
 /** The hand-written blurb of an index.md body: prose between the top and
